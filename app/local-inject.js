@@ -42,6 +42,10 @@
         body.appendChild(row);
 
         var msg = el("div", "font-size:11.5px;opacity:.65", "点一下：本地编译 → 体积校验 → OTA 推送");
+        if (!window.isSecureContext) {
+            var warn = el("div", "font-size:11px;line-height:1.5;color:#f5a524", "当前是 HTTP，浏览器禁用 Web Serial（串口烧录）。要用串口请改用 https://<NAS-IP>:8443（证书警告选「继续」），或直接用本面板走 OTA。");
+            body.appendChild(warn);
+        }
         body.appendChild(msg);
 
         var logBox = el("pre", [

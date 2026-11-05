@@ -18,6 +18,8 @@ import os
 import re
 import queue
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -31,6 +33,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(BASE, "static")
 WORK = os.environ.get("ESPOTA_WORK", os.path.join(BASE, "work"))
 PORT = int(os.environ.get("ESPOTA_PORT", "8765"))
+TLS_PORT = int(os.environ.get("ESPOTA_TLS_PORT", "8443"))
 OTA_LIMIT_1M = 520 * 1024          # 1MB 设备的 OTA 槽上限，超过直接拒绝
 
 JOBS = {}          # job_id -> {"lines": [...], "done": bool, "code": int}
@@ -268,10 +271,78 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, json.dumps({"error": "not found"}))
 
 
+def ensure_cert():
+    """生成自签名证书（Web Serial 需要安全上下文，HTTPS 才能用串口）"""
+    cert = os.path.join(WORK, "cert.pem")
+    key = os.path.join(WORK, "key.pem")
+    if os.path.exists(cert) and os.path.exists(key):
+        return cert, key
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        import datetime
+        import ipaddress
+
+        k = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "esphome-ota")])
+        san = [x509.DNSName("localhost")]
+        try:
+            san.append(x509.IPAddress(ipaddress.ip_address(socket.gethostbyname(socket.gethostname()))))
+        except Exception:
+            pass
+        for ip in ("127.0.0.1",):
+            san.append(x509.IPAddress(ipaddress.ip_address(ip)))
+        # 本机在局域网里的 IP（自签名证书要把它写进 SAN，浏览器才少报错）
+        try:
+            sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sk.connect(("8.8.8.8", 80))
+            lan_ip = sk.getsockname()[0]
+            sk.close()
+            if lan_ip:
+                san.append(x509.IPAddress(ipaddress.ip_address(lan_ip)))
+        except Exception:
+            pass
+        cert_obj = (
+            x509.CertificateBuilder()
+            .subject_name(name).issuer_name(name)
+            .public_key(k.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.utcnow() - datetime.timedelta(days=1))
+            .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))
+            .add_extension(x509.SubjectAlternativeName(san), critical=False)
+            .sign(k, hashes.SHA256())
+        )
+        with open(key, "wb") as f:
+            f.write(k.private_bytes(serialization.Encoding.PEM,
+                                    serialization.PrivateFormat.TraditionalOpenSSL,
+                                    serialization.NoEncryption()))
+        with open(cert, "wb") as f:
+            f.write(cert_obj.public_bytes(serialization.Encoding.PEM))
+        return cert, key
+    except Exception as e:
+        print("证书生成失败（HTTPS 不可用）: %s" % e, flush=True)
+        return None, None
+
+
 def main():
     os.makedirs(WORK, exist_ok=True)
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print("ESPHome OTA 本地服务已启动: http://0.0.0.0:%d  (工作目录 %s)" % (PORT, WORK), flush=True)
+    print("ESPHome OTA 服务已启动: http://0.0.0.0:%d  (工作目录 %s)" % (PORT, WORK), flush=True)
+
+    cert, key = ensure_cert()
+    if cert:
+        try:
+            tls = ThreadingHTTPServer(("0.0.0.0", TLS_PORT), Handler)
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(cert, key)
+            tls.socket = ctx.wrap_socket(tls.socket, server_side=True)
+            threading.Thread(target=tls.serve_forever, daemon=True).start()
+            print("HTTPS: https://0.0.0.0:%d  （浏览器警告选「继续访问」后可用 Web Serial）" % TLS_PORT, flush=True)
+        except Exception as e:
+            print("HTTPS 启动失败: %s" % e, flush=True)
+
     srv.serve_forever()
 
 
