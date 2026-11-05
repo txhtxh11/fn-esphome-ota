@@ -56,7 +56,8 @@ start() {{
   cd "$APP_DIR" || exit 1
   PY="$APP_DIR/.venv/bin/python3"
   [ -x "$PY" ] || PY="python3"
-  ESPOTA_PORT="$PORT" ESPOTA_WORK="$VAR_DIR/work" nohup "$PY" server.py >>"$LOG" 2>&1 &
+  ESPOTA_PORT="$PORT" ESPOTA_TLS_PORT="${{ESPOTA_TLS_PORT:-8443}}" ESPOTA_WORK="$VAR_DIR/work" \
+    setsid nohup "$PY" server.py >>"$LOG" 2>&1 < /dev/null &
   echo $! > "$PIDFILE"
   exit 0
 }}
