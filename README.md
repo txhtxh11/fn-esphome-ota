@@ -140,3 +140,36 @@ PLATFORMIO_CORE_DIR=<work>/pio
 | OTA（NAS → 设备） | ❌ 被 AP 隔离阻塞 |
 
 > 结论：**服务本身工作正常**，剩下两件事是网络环境（AP 隔离）和目标设备在线状态。
+
+### 5. 测试芯片 ESP-01S 无法关联 WiFi（Auth Expired）
+
+串口日志：
+
+```
+Disconnected ssid='ASUS' bssid=40:B0:76:37:8B:19 reason='Auth Expired'
+```
+
+试过：WPA2 认证、关闭省电、20dB 发射功率、fast_connect、锁定 BSSID(72:CF:84:2B:F7:21)，均未连上。
+同网络的 S30C / CMPOWER 一切正常，因此怀疑该 ESP-01S 供电不足或模块本身异常，需要换一个模块测试。
+
+### 6. HTTPS（8443）
+
+Web Serial 只在安全上下文可用，HTTP 页面点「连接」会提示「这个浏览器不支持 Web Serial」。
+服务启动时自动生成自签名证书（SAN 含本机局域网 IP）：
+
+```
+http://<NAS>:8765   普通使用 + 本地 OTA
+https://<NAS>:8443  串口/Web Serial 可用（证书警告选「继续访问」）
+```
+
+## 进度快照
+
+| 项目 | 状态 |
+|---|---|
+| NAS 服务 + systemd 自启 | ✅ |
+| HTTPS 8443 | ✅ |
+| .fpk 打包 | ✅ |
+| GitHub 仓库 | ✅ https://github.com/txhtxh11/fn-esphome-ota |
+| 桌面归档 | ✅ C:\Users\txh11\Desktop\ESPHome-OTA-NAS |
+| NAS 工具链预热 | ⏳ 43MB / 180MB |
+| 真机 OTA | ⏳ 受阻：AP 隔离 + 测试芯片无法联网 |
