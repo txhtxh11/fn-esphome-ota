@@ -13,6 +13,7 @@ ESPHome 本地 OTA 服务（飞牛 NAS）
 一切都在本地执行，设备必须与服务在同一内网。
 """
 
+import hashlib
 import json
 import os
 import re
@@ -94,8 +95,10 @@ def run(job, args, cwd=None, env=None):
 
 
 def prepare(yaml_text):
+    """按 YAML 内容做缓存目录：同一份配置第二次编译直接复用产物"""
     os.makedirs(WORK, exist_ok=True)
-    d = os.path.join(WORK, "build-" + uuid.uuid4().hex[:8])
+    h = hashlib.sha1(yaml_text.encode("utf-8")).hexdigest()[:12]
+    d = os.path.join(WORK, "cfg-" + h)
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, "device.yaml")
     with open(path, "w", encoding="utf-8") as f:
@@ -116,7 +119,13 @@ def do_build(job, yaml_text, upload_ip=None, bin_kind="bin"):
     d, path = prepare(yaml_text)
     log(job, "工作目录: " + d)
     env = tool_env()
-    code = run(job, esphome + ["compile", path], cwd=d, env=env)
+    name = node_name(yaml_text)
+    cached = os.path.join(d, ".esphome", "build", name, ".pioenvs", name, "firmware.ota.bin")
+    if os.path.exists(cached):
+        log(job, "命中缓存，跳过编译: " + cached)
+        code = 0
+    else:
+        code = run(job, esphome + ["compile", path], cwd=d, env=env)
     if code != 0:
         log(job, "编译失败 (code=%d)" % code)
         return code

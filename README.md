@@ -173,3 +173,23 @@ https://<NAS>:8443  串口/Web Serial 可用（证书警告选「继续访问」
 | 桌面归档 | ✅ C:\Users\txh11\Desktop\ESPHome-OTA-NAS |
 | NAS 工具链预热 | ⏳ 43MB / 180MB |
 | 真机 OTA | ⏳ 受阻：AP 隔离 + 测试芯片无法联网 |
+
+### 7. 编译缓存
+
+同一份 YAML 第二次编译直接复用产物（按内容 SHA1 分目录）：
+
+```
+首次编译  约 3 分钟
+缓存命中  2.5 秒（返回 code 0 + 产物体积）
+```
+
+实现：prepare() 用 sha1(yaml)[:12] 作为工作目录名，命中 irmware.ota.bin 就跳过 esphome compile。
+
+## 验证记录（NAS 实测）
+
+```
+POST /api/compile
+→ INFO Successfully compiled program.
+→ 产物 ota: 395760 字节 (386.5 KB)
+→ {"done": true, "code": 0}
+```
