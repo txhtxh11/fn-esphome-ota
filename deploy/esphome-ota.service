@@ -1,0 +1,18 @@
+[Unit]
+Description=ESPHome OTA local service
+After=network-online.target
+
+[Service]
+Type=simple
+User=t
+WorkingDirectory=/vol2/1000/esphome-ota
+Environment=ESPOTA_PORT=8765
+Environment=ESPOTA_WORK=/vol2/1000/esphome-ota/work
+Environment=HOME=/vol2/1000/esphome-ota/work/home
+Environment=PLATFORMIO_CORE_DIR=/vol2/1000/esphome-ota/work/pio
+ExecStart=/vol2/1000/esphome-ota/.venv/bin/python3 /vol2/1000/esphome-ota/server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
