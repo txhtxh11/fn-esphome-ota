@@ -111,7 +111,7 @@ def node_name(yaml_text):
     return m.group(1) if m else "device"
 
 
-def do_build(job, yaml_text, upload_ip=None, bin_kind="bin"):
+def do_build(job, yaml_text, upload_ip=None, bin_kind="bin", limit_bytes=None):
     esphome = which_esphome()
     if not esphome:
         log(job, "未找到 esphome，请先在本服务目录执行 pip install esphome")
@@ -143,8 +143,9 @@ def do_build(job, yaml_text, upload_ip=None, bin_kind="bin"):
             size = os.path.getsize(cand[k])
             log(job, "产物 %s: %d 字节 (%.1f KB)" % (k, size, size / 1024.0))
             break
-    if 0 < size > OTA_LIMIT_1M:
-        log(job, "体积超限 %d > %d，已拒绝推送（1MB 设备会写坏）" % (size, OTA_LIMIT_1M))
+    limit = limit_bytes or OTA_LIMIT_1M
+    if 0 < size > limit:
+        log(job, "体积超限 %d > %d，已拒绝推送" % (size, limit))
         return 3
 
     if upload_ip:
@@ -254,6 +255,61 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self._send(400, json.dumps({"error": "bad json"}))
 
+        if u.path == "/api/ota-bin":
+            ip = body.get("ip") or ""
+            name = body.get("name") or "firmware.bin"
+            data_b64 = body.get("data") or ""
+            try:
+                limit = int(body.get("limit") or OTA_LIMIT_1M)
+            except Exception:
+                limit = OTA_LIMIT_1M
+            if not ip or not data_b64:
+                return self._send(400, json.dumps({"error": "need ip and data"}))
+            import base64 as _b64
+            try:
+                raw = _b64.b64decode(data_b64)
+            except Exception:
+                return self._send(400, json.dumps({"error": "bad base64"}))
+            job = uuid.uuid4().hex[:12]
+            with JOBS_LOCK:
+                JOBS[job] = {"lines": [], "done": False, "code": None}
+
+            def worker():
+                try:
+                    esphome = which_esphome()
+                    if not esphome:
+                        log(job, "未找到 esphome")
+                        finish(job, 2)
+                        return
+                    d = os.path.join(WORK, "bin-" + uuid.uuid4().hex[:8])
+                    os.makedirs(d, exist_ok=True)
+                    fw = os.path.join(d, "firmware.bin")
+                    with open(fw, "wb") as f:
+                        f.write(raw)
+                    size = len(raw)
+                    log(job, "镜像 %s: %d 字节 (%.1f KB)" % (name, size, size / 1024.0))
+                    if size > limit:
+                        log(job, "体积超限（%d > %d），拒绝推送" % (size, limit))
+                        finish(job, 3)
+                        return
+                    yml = ("esphome:\n  name: otapush\n"
+                           "esp8266:\n  board: esp01_1m\n"
+                           "wifi:\n  ssid: \"dummy\"\n  password: \"12345678\"\n"
+                           "ota:\n  - platform: esphome\n")
+                    ypath = os.path.join(d, "ota_only.yaml")
+                    with open(ypath, "w", encoding="utf-8") as f:
+                        f.write(yml)
+                    env = tool_env()
+                    code = run(job, esphome + ["upload", "--device", ip, "--file", fw, ypath], cwd=d, env=env)
+                    log(job, "OTA 成功" if code == 0 else "OTA 失败 (code=%d)" % code)
+                    finish(job, code)
+                except Exception as e:
+                    log(job, "异常: %s" % e)
+                    finish(job, 1)
+
+            threading.Thread(target=worker, daemon=True).start()
+            return self._send(200, json.dumps({"job": job}))
+
         if u.path in ("/api/compile", "/api/ota"):
             yaml_text = body.get("yaml")
             if isinstance(yaml_text, dict):
@@ -267,9 +323,14 @@ class Handler(BaseHTTPRequestHandler):
             with JOBS_LOCK:
                 JOBS[job] = {"lines": [], "done": False, "code": None}
 
+            try:
+                req_limit = int(body.get("limit") or OTA_LIMIT_1M)
+            except Exception:
+                req_limit = OTA_LIMIT_1M
+
             def worker():
                 try:
-                    code = do_build(job, yaml_text, ip)
+                    code = do_build(job, yaml_text, ip, limit_bytes=req_limit)
                 except Exception as e:
                     log(job, "异常: %s" % e)
                     code = 1

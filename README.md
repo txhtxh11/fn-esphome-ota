@@ -193,3 +193,42 @@ POST /api/compile
 → 产物 ota: 395760 字节 (386.5 KB)
 → {"done": true, "code": 0}
 ```
+
+## 真机 OTA 验证（已通过）
+
+网络环境：NAS 与设备之间存在 AP 隔离，NAS 无法直连设备。
+用本机做 TCP 代理绕过（NAS 能访问本机 TCP，ICMP 被防火墙拦但不影响）：
+
+```
+NAS → 192.168.50.185:8266 ──proxy.py──> 192.168.50.66:8266
+```
+
+实测日志：
+
+```
+INFO Connected to 192.168.50.185
+INFO Uploading .../firmware.bin (659808 bytes)
+INFO Compressed to 462950 bytes
+INFO Upload took 8.09 seconds
+INFO OTA successful
+→ {"done": true, "code": 0}
+```
+
+OTA 后设备状态：
+
+```
+ping 192.168.50.66   通
+5556 (HAP)           开
+8266 (OTA)           开
+巴法 cmpw1006/2006    均在线
+```
+
+### 新增接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | /api/ota-bin | 直接推送已有 bin（不编译）：{"ip","name","data"(base64),"limit"} |
+
+### 体积上限改为按请求传入
+
+1MB 设备 520 KB、4MB 设备 1.6 MB，由前端按板型传入 limit（字节），默认 520 KB。
