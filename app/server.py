@@ -53,10 +53,16 @@ def finish(job, code):
 
 
 def which_esphome():
+    """返回可执行的命令前缀列表：['esphome'] 或 [python, '-m', 'esphome']"""
     for c in (os.environ.get("ESPHOME_BIN"), shutil.which("esphome"), os.path.join(BASE, ".venv", "bin", "esphome")):
         if c and os.path.exists(c):
-            return c
-    return None
+            return [c]
+    try:
+        subprocess.check_output([sys.executable, "-m", "esphome", "version"], timeout=30,
+                                stderr=subprocess.DEVNULL)
+        return [sys.executable, "-m", "esphome"]
+    except Exception:
+        return None
 
 
 def tool_env():
@@ -107,7 +113,7 @@ def do_build(job, yaml_text, upload_ip=None, bin_kind="bin"):
     d, path = prepare(yaml_text)
     log(job, "工作目录: " + d)
     env = tool_env()
-    code = run(job, [esphome, "compile", path], cwd=d, env=env)
+    code = run(job, esphome + ["compile", path], cwd=d, env=env)
     if code != 0:
         log(job, "编译失败 (code=%d)" % code)
         return code
@@ -132,7 +138,7 @@ def do_build(job, yaml_text, upload_ip=None, bin_kind="bin"):
     if upload_ip:
         fw = cand["ota"] if os.path.exists(cand["ota"]) else cand["bin"]
         log(job, "准备 OTA 到 %s" % upload_ip)
-        code = run(job, [esphome, "upload", "--device", upload_ip, "--file", fw, path], cwd=d, env=env)
+        code = run(job, esphome + ["upload", "--device", upload_ip, "--file", fw, path], cwd=d, env=env)
         log(job, "OTA 成功" if code == 0 else "OTA 失败 (code=%d)" % code)
         return code
     return 0
@@ -171,13 +177,30 @@ class Handler(BaseHTTPRequestHandler):
             ver = None
             if e:
                 try:
-                    ver = subprocess.check_output([e, "version"], timeout=20).decode().strip().splitlines()[-1]
+                    ver = subprocess.check_output(e + ["version"], timeout=30).decode().strip().splitlines()[-1]
                 except Exception:
                     ver = "unknown"
             return self._send(200, json.dumps({"ok": True, "esphome": ver, "work": WORK}))
         if u.path == "/api/events":
             job = (parse_qs(u.query).get("job") or [""])[0]
             return self._stream(job)
+        # 静态文件：/local-inject.js 之类
+        rel = u.path.lstrip("/")
+        if rel and ".." not in rel:
+            for base in (STATIC, BASE):
+                fp = os.path.join(base, rel)
+                if os.path.isfile(fp):
+                    ctype = "application/octet-stream"
+                    if fp.endswith(".js"):
+                        ctype = "application/javascript; charset=utf-8"
+                    elif fp.endswith(".css"):
+                        ctype = "text/css; charset=utf-8"
+                    elif fp.endswith(".html"):
+                        ctype = "text/html; charset=utf-8"
+                    elif fp.endswith(".png"):
+                        ctype = "image/png"
+                    with open(fp, "rb") as f:
+                        return self._send(200, f.read(), ctype)
         return self._send(404, json.dumps({"error": "not found"}))
 
     def _stream(self, job):
@@ -220,7 +243,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, json.dumps({"error": "bad json"}))
 
         if u.path in ("/api/compile", "/api/ota"):
-            yaml_text = body.get("yaml") or ""
+            yaml_text = body.get("yaml")
+            if isinstance(yaml_text, dict):
+                yaml_text = yaml_text.get("yaml")
+            if not isinstance(yaml_text, str):
+                yaml_text = ""
             if not yaml_text.strip():
                 return self._send(400, json.dumps({"error": "empty yaml"}))
             ip = body.get("ip") if u.path == "/api/ota" else None
