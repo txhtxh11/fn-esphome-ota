@@ -232,3 +232,54 @@ ping 192.168.50.66   通
 ### 体积上限改为按请求传入
 
 1MB 设备 520 KB、4MB 设备 1.6 MB，由前端按板型传入 limit（字节），默认 520 KB。
+
+## 真机 OTA 验证（目标设备 192.168.50.203）✅
+
+### 关键发现：必须设置 WiFi 物理模式为 11G
+
+测试芯片一开始永远连不上 AP，日志只有：
+
+```
+Connecting to 'ASUS' (72:CF:84:2B:F7:21)...   (-26dB，信号极强)
+（之后 40 秒无任何日志，关联挂住）
+```
+
+补上下面这段后立刻连上：
+
+```yaml
+esphome:
+  platformio_options:
+    build_flags:
+      - "-D HOMEKIT_LOG_LEVEL=0 -D ARDUINO_HOMEKIT_LOWROM"
+  on_boot:
+    priority: 800
+    then:
+      - lambda: |-
+          WiFi.setPhyMode(WIFI_PHY_MODE_11G);
+```
+
+原因：华硕 BE86U 是 WiFi 7 路由器，2.4G 默认走 11n/11ax，ESP8266 协商失败；强制 11G 即可。
+
+> S30C / CMPOWER 的配置里本来就有这段，所以它们一直正常。新写测试固件时漏掉，才导致排查了一整晚。
+
+### 完整 OTA 记录（NAS → 代理 → 设备）
+
+```
+NAS->PC:8266: OPEN
+INFO Connecting to 192.168.50.185 port 8266...
+INFO Connected to 192.168.50.185
+INFO Uploading .../firmware.ota.bin (396416 bytes)
+INFO Compressed to 282757 bytes
+INFO Upload took 22.42 seconds
+INFO OTA successful
+→ {"done": true, "code": 0}
+```
+
+OTA 后设备状态：
+
+```
+ping 192.168.50.203   通
+80 / 8266 / 6053      全开
+网页标题              test01s
+实体                  test relay
+```
