@@ -26,7 +26,8 @@
         es.onmessage = function (ev) {
             var m = JSON.parse(ev.data);
             if (m.line != null) {
-                logBox.textContent += m.line + "\n";
+                var clean = String(m.line).replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+                logBox.textContent += clean + "\n";
                 logBox.scrollTop = logBox.scrollHeight;
             }
             if (m.done) {
@@ -54,7 +55,9 @@
             "#espotaLocal.hk-show .hk-hint{display:inline-block}" +
             "#espotaLocal .hk-warn{color:#f5a524}" +
             "#espotaLocal .hk-force{all:unset;cursor:pointer;color:var(--accent,#f5a524);" +
-            "text-decoration:underline;font-weight:700}";
+            "text-decoration:underline;font-weight:700}" +
+            "#espotaLocal .hk-log{scrollbar-width:none;-ms-overflow-style:none;cursor:text}" +
+            "#espotaLocal .hk-log::-webkit-scrollbar{width:0;height:0;display:none}";
         document.head.appendChild(styleTag);
 
         var head = el("div", "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1.5px solid var(--line,#333)");
@@ -120,10 +123,12 @@
         body.appendChild(row2);
 
         var logBox = el("pre", [
-            "margin:0", "max-height:200px", "overflow:auto", "background:#0d0d0d",
-            "border:1.5px solid var(--line,#333)", "padding:8px", "font-size:11px",
-            "white-space:pre-wrap", "display:none"
+            "margin:0", "max-height:200px", "overflow-y:auto", "overflow-x:hidden",
+            "background:#0d0d0d", "border:1.5px solid var(--line,#333)", "padding:8px",
+            "font-size:11px", "white-space:pre-wrap", "word-break:break-all",
+            "overflow-wrap:anywhere", "display:none"
         ].join(";"));
+        logBox.className = "hk-log";   // 隐藏滚动条，滚轮照常滚动
         body.appendChild(logBox);
         wrap.appendChild(body);
 
