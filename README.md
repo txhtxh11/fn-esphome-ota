@@ -283,3 +283,33 @@ ping 192.168.50.203   通
 网页标题              test01s
 实体                  test relay
 ```
+
+## 内置组件（离线编译）
+
+NAS 访问 GitHub 很慢（github.com 能连通但 RTT 12 秒，ESPHome 的 git clone 常超时），因此应用**内置组件**：
+
+```
+/vol2/1000/esphome-ota/components/
+├── homekit/     ← ESP8266 HomeKit 组件
+└── sy7t609/     ← 电量芯片
+```
+
+编译前，server.py 会自动把 YAML 里的：
+
+```yaml
+external_components:
+  - source: { type: git, url: https://github.com/txhtxh11/homekit, path: homekit-esp8266 }
+    components: [homekit]
+```
+
+改写成：
+
+```yaml
+external_components:
+  - source: { type: local, path: /vol2/1000/esphome-ota/components }
+    components: [homekit, sy7t609]
+```
+
+好处：**编译完全不需要外网**，也不会因为 GitHub 超时失败。页面生成的 YAML 不用改，服务端自动处理。
+
+实测：2026.6.5 + 内置组件编译通过，产物 440,368 字节。

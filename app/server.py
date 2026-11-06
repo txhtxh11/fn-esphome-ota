@@ -33,6 +33,7 @@ from urllib.parse import urlparse, parse_qs
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(BASE, "static")
 WORK = os.environ.get("ESPOTA_WORK", os.path.join(BASE, "work"))
+COMPONENTS = os.path.join(BASE, "components")   # 内置组件（避免连 GitHub 超时）
 PORT = int(os.environ.get("ESPOTA_PORT", "8765"))
 TLS_PORT = int(os.environ.get("ESPOTA_TLS_PORT", "8443"))
 OTA_LIMIT_1M = 520 * 1024          # 1MB 设备的 OTA 槽上限，超过直接拒绝
@@ -95,9 +96,36 @@ def run(job, args, cwd=None, env=None):
     except Exception as e:
         log(job, "启动失败: %s" % e)
         return 127
+    ansi = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
     for line in p.stdout:
-        log(job, line.rstrip())
+        log(job, ansi.sub("", line).rstrip())
     return p.wait()
+
+
+def rewrite_external_components(text):
+    """把 git 源换成本地内置组件：NAS 访问 GitHub 很慢，clone 经常超时"""
+    if not os.path.isdir(os.path.join(COMPONENTS, "homekit")):
+        return text
+    lines = text.splitlines()
+    out, i, changed = [], 0, False
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("external_components:"):
+            changed = True
+            out.append("external_components:")
+            out.append("  - source:")
+            out.append("      type: local")
+            out.append("      path: " + COMPONENTS)
+            out.append("    components: [homekit, sy7t609]")
+            i += 1
+            while i < len(lines) and (lines[i].startswith(" ") or lines[i].strip() == ""):
+                if lines[i].strip() == "" and i + 1 < len(lines) and not lines[i + 1].startswith(" "):
+                    break
+                i += 1
+            continue
+        out.append(line)
+        i += 1
+    return "\n".join(out) + "\n" if changed else text
 
 
 def prepare(yaml_text):
@@ -107,8 +135,9 @@ def prepare(yaml_text):
     d = os.path.join(WORK, "cfg-" + h)
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, "device.yaml")
+    rewritten = rewrite_external_components(yaml_text)
     with open(path, "w", encoding="utf-8") as f:
-        f.write(yaml_text)
+        f.write(rewritten)
     return d, path
 
 
@@ -177,6 +206,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "content-type")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        self.send_header("Cache-Control", "no-store, max-age=0")
         self.end_headers()
         self.wfile.write(data)
 

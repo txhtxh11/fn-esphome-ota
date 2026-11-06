@@ -210,6 +210,9 @@ def build():
         add(os.path.join(APP, "server.py"), "server.py")
         add(os.path.join(APP, "local-inject.js"), "local-inject.js")
         add(os.path.join(APP, "static"), "static")
+        comp = os.path.join(APP, "components")
+        if os.path.isdir(comp):
+            add(comp, "components")   # 内置组件：编译不依赖 GitHub
 
     md5 = hashlib.md5(open(apptgz, "rb").read()).hexdigest()
     w("manifest", MANIFEST + f"checksum                   = {md5}\n", 0o644)
