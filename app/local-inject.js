@@ -67,14 +67,19 @@
             "all:unset", "cursor:pointer", "padding:8px 12px", "font:inherit", "font-weight:700",
             "background:var(--accent,#f5a524)", "color:#111"
         ].join(";"), "编译并 OTA");
+        go.title = "本地编译 → 体积校验 → OTA 推送";
         row.appendChild(go);
         body.appendChild(row);
 
-        var msg = el("div", "font-size:11.5px;opacity:.65", "点一下：本地编译 → 体积校验 → OTA 推送");
-        if (!window.isSecureContext) {
-            msg.textContent = "HTTP 下 Web Serial 不可用；OTA 不受影响，用 https 访问才能用串口";
+        var msg = el("div", "font-size:11.5px;opacity:.65;display:none");
+        function setMsg(text) {
+            msg.textContent = text || "";
+            msg.style.display = text ? "block" : "none";
         }
         body.appendChild(msg);
+        if (!window.isSecureContext) {
+            setMsg("HTTP 下 Web Serial 不可用；OTA 不受影响");
+        }
 
         // 第二行：选择本地 bin 直接推送
         var row2 = el("div", "display:flex;gap:8px;align-items:center");
@@ -109,14 +114,14 @@
         function busyOff(text) {
             state.busy = false;
             go.textContent = "编译并 OTA";
-            msg.textContent = text || "点一下：本地编译 → 体积校验 → OTA 推送";
+            setMsg(text);
         }
 
         go.onclick = function () {
             if (state.busy) return;
             var yaml = "";
             try { yaml = window.__debug ? window.__debug.buildYaml() : ""; } catch (e) { }
-            if (!yaml) { msg.textContent = "拿不到 YAML，请先配置设备"; return; }
+            if (!yaml) { setMsg("拿不到 YAML，请先配置设备"); return; }
             busyOn("编译中…");
             fetch(API + "/api/ota", {
                 method: "POST",
@@ -135,11 +140,11 @@
         file.onchange = function () {
             var f = file.files && file.files[0];
             if (!f) return;
-            if (state.busy) { msg.textContent = "正在忙，请稍候"; return; }
+            if (state.busy) { setMsg("正在忙，请稍候"); return; }
             fileName.textContent = f.name + " (" + (f.size / 1024).toFixed(0) + " KB)";
             var limit = limitForState();
             if (f.size > limit) {
-                msg.textContent = "文件超过上限 " + (limit / 1024).toFixed(0) + " KB，已拒绝";
+                setMsg("文件超过上限 " + (limit / 1024).toFixed(0) + " KB，已拒绝");
                 logBox.style.display = "block";
                 logBox.textContent = "体积 " + f.size + " 字节 > " + limit + "，拒绝推送\n";
                 return;
@@ -161,7 +166,7 @@
                     busyOff("请求失败：" + e.message);
                 });
             };
-            reader.onerror = function () { msg.textContent = "读取文件失败"; };
+            reader.onerror = function () { setMsg("读取文件失败"); };
             reader.readAsDataURL(f);
         };
 
