@@ -46,22 +46,29 @@
         ].join(";"));
         wrap.id = "espotaLocal";
 
+        var st = document.createElement("style");
+        st.textContent = "#espotaLocal .hk-hint{display:none;color:var(--accent,#f5a524);" +
+            "font-size:10.5px;line-height:1.3;font-weight:600;white-space:nowrap;" +
+            "overflow:hidden;text-overflow:ellipsis;max-width:220px}" +
+            "#espotaLocal.hk-show .hk-hint{display:inline-block}";
+        document.head.appendChild(st);
+
         var head = el("div", "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1.5px solid var(--line,#333)");
         var title = el("span", "font-weight:700;cursor:default", "本地 OTA");
-        var hint = el("span", [
-            "display:none", "font-size:10.5px", "line-height:1.3", "padding:2px 6px",
-            "background:var(--accent,#f5a524)", "color:#111", "font-weight:600",
-            "white-space:nowrap", "overflow:hidden", "text-overflow:ellipsis",
-            "max-width:210px", "transition:opacity .15s"
-        ].join(";"), "本地编译 → 体积校验 → OTA 推送");
+        var hint = el("span", "", "本地编译 → 体积校验 → OTA 推送");
+        hint.className = "hk-hint";
         var hintTimer = null;
-        function showHint() {
-            hint.style.display = "inline-block";
+        function showHint(ms) {
+            wrap.classList.add("hk-show");
             if (hintTimer) clearTimeout(hintTimer);
-            hintTimer = setTimeout(function () { hint.style.display = "none"; }, 3000);
+            if (ms) hintTimer = setTimeout(function () { wrap.classList.remove("hk-show"); }, ms);
         }
-        title.addEventListener("mouseenter", showHint);
-        title.addEventListener("click", showHint);
+        head.addEventListener("mouseenter", function () { showHint(0); });
+        head.addEventListener("mouseleave", function () {
+            if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
+            wrap.classList.remove("hk-show");
+        });
+        title.addEventListener("click", function () { showHint(3000); });
         head.appendChild(title);
         head.appendChild(hint);
         var spacer = el("span", "flex:1");
