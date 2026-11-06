@@ -46,8 +46,26 @@
         ].join(";"));
         wrap.id = "espotaLocal";
 
-        var head = el("div", "display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1.5px solid var(--line,#333)");
-        head.appendChild(el("span", "font-weight:700", "本地 OTA"));
+        var head = el("div", "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1.5px solid var(--line,#333)");
+        var title = el("span", "font-weight:700;cursor:default", "本地 OTA");
+        var hint = el("span", [
+            "display:none", "font-size:10.5px", "line-height:1.3", "padding:2px 6px",
+            "background:var(--accent,#f5a524)", "color:#111", "font-weight:600",
+            "white-space:nowrap", "overflow:hidden", "text-overflow:ellipsis",
+            "max-width:210px", "transition:opacity .15s"
+        ].join(";"), "本地编译 → 体积校验 → OTA 推送");
+        var hintTimer = null;
+        function showHint() {
+            hint.style.display = "inline-block";
+            if (hintTimer) clearTimeout(hintTimer);
+            hintTimer = setTimeout(function () { hint.style.display = "none"; }, 3000);
+        }
+        title.addEventListener("mouseenter", showHint);
+        title.addEventListener("click", showHint);
+        head.appendChild(title);
+        head.appendChild(hint);
+        var spacer = el("span", "flex:1");
+        head.appendChild(spacer);
         var close = el("button", "all:unset;cursor:pointer;opacity:.6;padding:0 4px", "×");
         close.onclick = function () { wrap.style.display = "none"; };
         head.appendChild(close);
@@ -67,7 +85,6 @@
             "all:unset", "cursor:pointer", "padding:8px 12px", "font:inherit", "font-weight:700",
             "background:var(--accent,#f5a524)", "color:#111"
         ].join(";"), "编译并 OTA");
-        go.title = "本地编译 → 体积校验 → OTA 推送";
         row.appendChild(go);
         body.appendChild(row);
 
