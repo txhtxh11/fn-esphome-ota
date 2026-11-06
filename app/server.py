@@ -43,15 +43,21 @@ JOBS_LOCK = threading.Lock()
 
 def log(job, text):
     with JOBS_LOCK:
-        J = JOBS.setdefault(job, {"lines": [], "done": False, "code": None})
+        J = JOBS.setdefault(job, {"lines": [], "done": False, "code": None, "meta": None})
         for line in text.splitlines():
             J["lines"].append(line)
     print(text, flush=True)
 
 
+def set_meta(job, **kw):
+    with JOBS_LOCK:
+        J = JOBS.setdefault(job, {"lines": [], "done": False, "code": None, "meta": None})
+        J["meta"] = kw
+
+
 def finish(job, code):
     with JOBS_LOCK:
-        J = JOBS.setdefault(job, {"lines": [], "done": False, "code": None})
+        J = JOBS.setdefault(job, {"lines": [], "done": False, "code": None, "meta": None})
         J["done"] = True
         J["code"] = code
 
@@ -111,7 +117,7 @@ def node_name(yaml_text):
     return m.group(1) if m else "device"
 
 
-def do_build(job, yaml_text, upload_ip=None, bin_kind="bin", limit_bytes=None):
+def do_build(job, yaml_text, upload_ip=None, bin_kind="bin", limit_bytes=None, force=False):
     esphome = which_esphome()
     if not esphome:
         log(job, "未找到 esphome，请先在本服务目录执行 pip install esphome")
@@ -144,9 +150,12 @@ def do_build(job, yaml_text, upload_ip=None, bin_kind="bin", limit_bytes=None):
             log(job, "产物 %s: %d 字节 (%.1f KB)" % (k, size, size / 1024.0))
             break
     limit = limit_bytes or OTA_LIMIT_1M
-    if 0 < size > limit:
-        log(job, "体积超限 %d > %d，已拒绝推送" % (size, limit))
+    if 0 < size > limit and not force:
+        log(job, "体积 %d 字节超过建议上限 %d（仅提示，可强制继续）" % (size, limit))
+        set_meta(job, overLimit=True, size=size, limit=limit)
         return 3
+    if 0 < size > limit and force:
+        log(job, "已确认强制推送：%d > %d" % (size, limit))
 
     if upload_ip:
         fw = cand["ota"] if os.path.exists(cand["ota"]) else cand["bin"]
@@ -235,7 +244,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(("data: " + json.dumps({"line": ln}, ensure_ascii=False) + "\n\n").encode("utf-8"))
                     sent += 1
                 if done:
-                    self.wfile.write(("data: " + json.dumps({"done": True, "code": code}) + "\n\n").encode("utf-8"))
+                    payload = {"done": True, "code": code}
+                    if J and J.get("meta"):
+                        payload.update(J["meta"])
+                    self.wfile.write(("data: " + json.dumps(payload) + "\n\n").encode("utf-8"))
                     break
                 idle = 0 if lines else idle + 1
                 if idle > 1200:
@@ -263,6 +275,7 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int(body.get("limit") or OTA_LIMIT_1M)
             except Exception:
                 limit = OTA_LIMIT_1M
+            force = bool(body.get("force"))
             if not ip or not data_b64:
                 return self._send(400, json.dumps({"error": "need ip and data"}))
             import base64 as _b64
@@ -288,8 +301,9 @@ class Handler(BaseHTTPRequestHandler):
                         f.write(raw)
                     size = len(raw)
                     log(job, "镜像 %s: %d 字节 (%.1f KB)" % (name, size, size / 1024.0))
-                    if size > limit:
-                        log(job, "体积超限（%d > %d），拒绝推送" % (size, limit))
+                    if size > limit and not force:
+                        log(job, "体积 %d 字节超过建议上限 %d（仅提示，可强制继续）" % (size, limit))
+                        set_meta(job, overLimit=True, size=size, limit=limit)
                         finish(job, 3)
                         return
                     yml = ("esphome:\n  name: otapush\n"
@@ -327,10 +341,11 @@ class Handler(BaseHTTPRequestHandler):
                 req_limit = int(body.get("limit") or OTA_LIMIT_1M)
             except Exception:
                 req_limit = OTA_LIMIT_1M
+            req_force = bool(body.get("force"))
 
             def worker():
                 try:
-                    code = do_build(job, yaml_text, ip, limit_bytes=req_limit)
+                    code = do_build(job, yaml_text, ip, limit_bytes=req_limit, force=req_force)
                 except Exception as e:
                     log(job, "异常: %s" % e)
                     code = 1

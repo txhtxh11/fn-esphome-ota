@@ -31,10 +31,10 @@
             }
             if (m.done) {
                 es.close();
-                onDone(m.code);
+                onDone(m);
             }
         };
-        es.onerror = function () { es.close(); onDone(-1); };
+        es.onerror = function () { es.close(); onDone({ code: -1 }); };
     }
 
     function panel() {
@@ -46,33 +46,29 @@
         ].join(";"));
         wrap.id = "espotaLocal";
 
-        var st = document.createElement("style");
-        st.textContent = "#espotaLocal .hk-hint{display:none;color:var(--accent,#f5a524);" +
-            "font-size:10.5px;line-height:1.3;font-weight:600;white-space:nowrap;" +
-            "overflow:hidden;text-overflow:ellipsis;max-width:220px}" +
-            "#espotaLocal.hk-show .hk-hint{display:inline-block}";
-        document.head.appendChild(st);
+        var styleTag = document.createElement("style");
+        styleTag.textContent =
+            "#espotaLocal .hk-hint{display:none;color:var(--accent,#f5a524);font-size:10.5px;" +
+            "line-height:1.3;font-weight:600;white-space:nowrap;overflow:hidden;" +
+            "text-overflow:ellipsis;max-width:200px}" +
+            "#espotaLocal.hk-show .hk-hint{display:inline-block}" +
+            "#espotaLocal .hk-warn{color:#f5a524}" +
+            "#espotaLocal .hk-force{all:unset;cursor:pointer;color:var(--accent,#f5a524);" +
+            "text-decoration:underline;font-weight:700}";
+        document.head.appendChild(styleTag);
 
         var head = el("div", "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1.5px solid var(--line,#333)");
-        var title = el("span", "font-weight:700;cursor:default", "本地 OTA");
+        head.appendChild(el("span", "font-weight:700", "本地 OTA"));
         var hint = el("span", "", "本地编译 → 体积校验 → OTA 推送");
         hint.className = "hk-hint";
+        head.appendChild(hint);
         var hintTimer = null;
         function showHint(ms) {
             wrap.classList.add("hk-show");
             if (hintTimer) clearTimeout(hintTimer);
             if (ms) hintTimer = setTimeout(function () { wrap.classList.remove("hk-show"); }, ms);
         }
-        head.addEventListener("mouseenter", function () { showHint(0); });
-        head.addEventListener("mouseleave", function () {
-            if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
-            wrap.classList.remove("hk-show");
-        });
-        title.addEventListener("click", function () { showHint(3000); });
-        head.appendChild(title);
-        head.appendChild(hint);
-        var spacer = el("span", "flex:1");
-        head.appendChild(spacer);
+        head.appendChild(el("span", "flex:1"));
         var close = el("button", "all:unset;cursor:pointer;opacity:.6;padding:0 4px", "×");
         close.onclick = function () { wrap.style.display = "none"; };
         head.appendChild(close);
@@ -80,7 +76,6 @@
 
         var body = el("div", "padding:10px 12px;display:flex;flex-direction:column;gap:8px");
 
-        // 第一行：IP + 编译并 OTA
         var row = el("div", "display:flex;gap:8px");
         var ip = el("input", "flex:1;min-width:0;background:#111;border:1.5px solid var(--line,#333);color:inherit;padding:8px;font:inherit");
         ip.value = state.ip;
@@ -90,22 +85,25 @@
 
         var go = el("button", [
             "all:unset", "cursor:pointer", "padding:8px 12px", "font:inherit", "font-weight:700",
-            "background:var(--accent,#f5a524)", "color:#111"
+            "background:var(--accent,#f5a524)", "color:#111", "white-space:nowrap"
         ].join(";"), "编译并 OTA");
+        go.addEventListener("mouseenter", function () { showHint(0); });
+        go.addEventListener("mouseleave", function () {
+            if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
+            wrap.classList.remove("hk-show");
+        });
+        go.addEventListener("click", function () { showHint(3000); });
         row.appendChild(go);
         body.appendChild(row);
 
-        var msg = el("div", "font-size:11.5px;opacity:.65;display:none");
-        function setMsg(text) {
+        var msg = el("div", "font-size:11.5px;opacity:.75;display:none");
+        function setMsg(text, cls) {
             msg.textContent = text || "";
+            msg.className = cls === "warn" ? "hk-warn" : "";
             msg.style.display = text ? "block" : "none";
         }
         body.appendChild(msg);
-        if (!window.isSecureContext) {
-            setMsg("HTTP 下 Web Serial 不可用；OTA 不受影响");
-        }
 
-        // 第二行：选择本地 bin 直接推送
         var row2 = el("div", "display:flex;gap:8px;align-items:center");
         var fileBtn = el("button", [
             "all:unset", "cursor:pointer", "padding:7px 10px", "font:inherit", "font-size:12px",
@@ -135,62 +133,64 @@
             logBox.style.display = "block";
             logBox.textContent = "";
         }
-        function busyOff(text) {
+        function busyOff(text, cls) {
             state.busy = false;
             go.textContent = "编译并 OTA";
-            setMsg(text);
+            setMsg(text, cls);
+        }
+
+        function offerForce(payload, url, m) {
+            busyOff("超出建议上限（" + Math.round(m.size / 1024) + " KB > " +
+                Math.round(m.limit / 1024) + " KB）。设备实际空间可能够用，可继续推送。", "warn");
+            var f = el("button", "", "仍要推送");
+            f.className = "hk-force";
+            f.onclick = function () {
+                var p = Object.assign({}, payload, { force: true });
+                start(p, url);
+            };
+            msg.appendChild(document.createTextNode(" "));
+            msg.appendChild(f);
+        }
+
+        function start(payload, url) {
+            if (state.busy) return;
+            busyOn(url === "/api/ota" ? "编译中…" : "推送中…");
+            fetch(API + url, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(payload)
+            }).then(function (r) { return r.json(); }).then(function (d) {
+                if (!d.job) throw new Error(d.error || "no job");
+                stream(d.job, logBox, function (m) {
+                    if (m.overLimit) { offerForce(payload, url, m); return; }
+                    if (url === "/api/ota") {
+                        busyOff(m.code === 0 ? "完成" : "失败，看日志", m.code === 0 ? "" : "warn");
+                    } else {
+                        busyOff(m.code === 0 ? "bin 推送完成" : "bin 推送失败，看日志", m.code === 0 ? "" : "warn");
+                    }
+                });
+            }).catch(function (e) {
+                busyOff("请求失败：" + e.message, "warn");
+            });
         }
 
         go.onclick = function () {
-            if (state.busy) return;
             var yaml = "";
             try { yaml = window.__debug ? window.__debug.buildYaml() : ""; } catch (e) { }
-            if (!yaml) { setMsg("拿不到 YAML，请先配置设备"); return; }
-            busyOn("编译中…");
-            fetch(API + "/api/ota", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ yaml: yaml, ip: state.ip, limit: limitForState() })
-            }).then(function (r) { return r.json(); }).then(function (d) {
-                if (!d.job) throw new Error(d.error || "no job");
-                stream(d.job, logBox, function (code) {
-                    busyOff(code === 0 ? "完成" : "失败，看日志");
-                });
-            }).catch(function (e) {
-                busyOff("请求失败：" + e.message);
-            });
+            if (!yaml) { setMsg("拿不到 YAML，请先配置设备", "warn"); return; }
+            start({ yaml: yaml, ip: state.ip, limit: limitForState() }, "/api/ota");
         };
 
         file.onchange = function () {
             var f = file.files && file.files[0];
             if (!f) return;
-            if (state.busy) { setMsg("正在忙，请稍候"); return; }
             fileName.textContent = f.name + " (" + (f.size / 1024).toFixed(0) + " KB)";
-            var limit = limitForState();
-            if (f.size > limit) {
-                setMsg("文件超过上限 " + (limit / 1024).toFixed(0) + " KB，已拒绝");
-                logBox.style.display = "block";
-                logBox.textContent = "体积 " + f.size + " 字节 > " + limit + "，拒绝推送\n";
-                return;
-            }
             var reader = new FileReader();
             reader.onload = function () {
                 var b64 = String(reader.result).split(",")[1] || "";
-                busyOn("推送中…");
-                fetch(API + "/api/ota-bin", {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ ip: state.ip, name: f.name, data: b64, limit: limit })
-                }).then(function (r) { return r.json(); }).then(function (d) {
-                    if (!d.job) throw new Error(d.error || "no job");
-                    stream(d.job, logBox, function (code) {
-                        busyOff(code === 0 ? "bin 推送完成" : "bin 推送失败，看日志");
-                    });
-                }).catch(function (e) {
-                    busyOff("请求失败：" + e.message);
-                });
+                start({ ip: state.ip, name: f.name, data: b64, limit: limitForState() }, "/api/ota-bin");
             };
-            reader.onerror = function () { setMsg("读取文件失败"); };
+            reader.onerror = function () { setMsg("读取文件失败", "warn"); };
             reader.readAsDataURL(f);
         };
 
@@ -214,7 +214,7 @@
                 badge.onclick = function () { p.style.display = p.style.display === "none" ? "block" : "none"; };
                 document.body.appendChild(badge);
             })
-            .catch(function () { /* 线上版没有 /api，静默忽略 */ });
+            .catch(function () { });
     }
 
     if (document.readyState === "complete") setTimeout(boot, 400);
