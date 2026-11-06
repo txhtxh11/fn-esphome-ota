@@ -11,6 +11,32 @@
         return e;
     }
 
+    function limitForState() {
+        try {
+            var st = window.__debug && window.__debug.getState ? window.__debug.getState() : null;
+            var flash = st && st.flash;
+            if (flash === "4MB" || flash === "8MB") return 1600000;
+            if (flash === "2MB") return 1000000;
+        } catch (e) { }
+        return 520000;   // 1MB 设备默认
+    }
+
+    function stream(job, logBox, onDone) {
+        var es = new EventSource(API + "/api/events?job=" + job);
+        es.onmessage = function (ev) {
+            var m = JSON.parse(ev.data);
+            if (m.line != null) {
+                logBox.textContent += m.line + "\n";
+                logBox.scrollTop = logBox.scrollHeight;
+            }
+            if (m.done) {
+                es.close();
+                onDone(m.code);
+            }
+        };
+        es.onerror = function () { es.close(); onDone(-1); };
+    }
+
     function panel() {
         var wrap = el("div", [
             "position:fixed", "right:16px", "bottom:16px", "width:330px", "z-index:9999",
@@ -28,12 +54,15 @@
         wrap.appendChild(head);
 
         var body = el("div", "padding:10px 12px;display:flex;flex-direction:column;gap:8px");
+
+        // 第一行：IP + 编译并 OTA
         var row = el("div", "display:flex;gap:8px");
         var ip = el("input", "flex:1;min-width:0;background:#111;border:1.5px solid var(--line,#333);color:inherit;padding:8px;font:inherit");
         ip.value = state.ip;
         ip.placeholder = "设备 IP";
         ip.oninput = function () { state.ip = ip.value.trim(); localStorage.setItem("espota-ip", state.ip); };
         row.appendChild(ip);
+
         var go = el("button", [
             "all:unset", "cursor:pointer", "padding:8px 12px", "font:inherit", "font-weight:700",
             "background:var(--accent,#f5a524)", "color:#111"
@@ -43,10 +72,25 @@
 
         var msg = el("div", "font-size:11.5px;opacity:.65", "点一下：本地编译 → 体积校验 → OTA 推送");
         if (!window.isSecureContext) {
-            var warn = el("div", "font-size:11px;line-height:1.5;color:#f5a524", "当前是 HTTP，浏览器禁用 Web Serial（串口烧录）。要用串口请改用 https://<NAS-IP>:8443（证书警告选「继续」），或直接用本面板走 OTA。");
-            body.appendChild(warn);
+            msg.textContent = "HTTP 下 Web Serial 不可用；OTA 不受影响，用 https 访问才能用串口";
         }
         body.appendChild(msg);
+
+        // 第二行：选择本地 bin 直接推送
+        var row2 = el("div", "display:flex;gap:8px;align-items:center");
+        var fileBtn = el("button", [
+            "all:unset", "cursor:pointer", "padding:7px 10px", "font:inherit", "font-size:12px",
+            "border:1.5px solid var(--line,#333)", "color:inherit", "white-space:nowrap"
+        ].join(";"), "选本地 bin");
+        var file = el("input");
+        file.type = "file";
+        file.accept = ".bin";
+        file.style.display = "none";
+        var fileName = el("span", "font-size:11.5px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "未选择文件");
+        fileBtn.onclick = function () { file.click(); };
+        row2.appendChild(fileBtn);
+        row2.appendChild(fileName);
+        body.appendChild(row2);
 
         var logBox = el("pre", [
             "margin:0", "max-height:200px", "overflow:auto", "background:#0d0d0d",
@@ -56,42 +100,71 @@
         body.appendChild(logBox);
         wrap.appendChild(body);
 
+        function busyOn(text) {
+            state.busy = true;
+            go.textContent = text;
+            logBox.style.display = "block";
+            logBox.textContent = "";
+        }
+        function busyOff(text) {
+            state.busy = false;
+            go.textContent = "编译并 OTA";
+            msg.textContent = text || "点一下：本地编译 → 体积校验 → OTA 推送";
+        }
+
         go.onclick = function () {
             if (state.busy) return;
             var yaml = "";
             try { yaml = window.__debug ? window.__debug.buildYaml() : ""; } catch (e) { }
             if (!yaml) { msg.textContent = "拿不到 YAML，请先配置设备"; return; }
-            state.busy = true;
-            go.textContent = "编译中…";
-            logBox.style.display = "block";
-            logBox.textContent = "";
+            busyOn("编译中…");
             fetch(API + "/api/ota", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ yaml: yaml, ip: state.ip })
+                body: JSON.stringify({ yaml: yaml, ip: state.ip, limit: limitForState() })
             }).then(function (r) { return r.json(); }).then(function (d) {
                 if (!d.job) throw new Error(d.error || "no job");
-                var es = new EventSource(API + "/api/events?job=" + d.job);
-                es.onmessage = function (ev) {
-                    var m = JSON.parse(ev.data);
-                    if (m.line != null) {
-                        logBox.textContent += m.line + "\n";
-                        logBox.scrollTop = logBox.scrollHeight;
-                    }
-                    if (m.done) {
-                        es.close();
-                        state.busy = false;
-                        go.textContent = "编译并 OTA";
-                        msg.textContent = m.code === 0 ? "完成" : "失败，看日志";
-                    }
-                };
-                es.onerror = function () { es.close(); state.busy = false; go.textContent = "编译并 OTA"; };
+                stream(d.job, logBox, function (code) {
+                    busyOff(code === 0 ? "完成" : "失败，看日志");
+                });
             }).catch(function (e) {
-                state.busy = false;
-                go.textContent = "编译并 OTA";
-                msg.textContent = "请求失败：" + e.message;
+                busyOff("请求失败：" + e.message);
             });
         };
+
+        file.onchange = function () {
+            var f = file.files && file.files[0];
+            if (!f) return;
+            if (state.busy) { msg.textContent = "正在忙，请稍候"; return; }
+            fileName.textContent = f.name + " (" + (f.size / 1024).toFixed(0) + " KB)";
+            var limit = limitForState();
+            if (f.size > limit) {
+                msg.textContent = "文件超过上限 " + (limit / 1024).toFixed(0) + " KB，已拒绝";
+                logBox.style.display = "block";
+                logBox.textContent = "体积 " + f.size + " 字节 > " + limit + "，拒绝推送\n";
+                return;
+            }
+            var reader = new FileReader();
+            reader.onload = function () {
+                var b64 = String(reader.result).split(",")[1] || "";
+                busyOn("推送中…");
+                fetch(API + "/api/ota-bin", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ ip: state.ip, name: f.name, data: b64, limit: limit })
+                }).then(function (r) { return r.json(); }).then(function (d) {
+                    if (!d.job) throw new Error(d.error || "no job");
+                    stream(d.job, logBox, function (code) {
+                        busyOff(code === 0 ? "bin 推送完成" : "bin 推送失败，看日志");
+                    });
+                }).catch(function (e) {
+                    busyOff("请求失败：" + e.message);
+                });
+            };
+            reader.onerror = function () { msg.textContent = "读取文件失败"; };
+            reader.readAsDataURL(f);
+        };
+
         return wrap;
     }
 
